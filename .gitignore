@@ -1,0 +1,8 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.idea/
+.claude/
+.DS_Store
+*.lz77

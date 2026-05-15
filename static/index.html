@@ -1,0 +1,197 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>LZ77</title>
+    <link rel="stylesheet" href="/static/style.css" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+</head>
+<body>
+    <header class="topbar">
+        <div class="brand">
+            <h1>LZ77</h1>
+        </div>
+        <div class="topbar-actions">
+            <button class="btn ghost" id="btnSample" title="Загрузить тестовые данные">Тестовые данные</button>
+            <button class="btn ghost" id="btnClear" title="Очистить">Очистить</button>
+            <button class="btn ghost icon" id="btnHelp" title="Как работает LZ77">?</button>
+        </div>
+    </header>
+
+    <main class="layout">
+        <!-- ЛЕВАЯ КОЛОНКА: ввод + статистика -->
+        <section class="panel input-panel">
+            <div class="tabs">
+                <button class="tab active" data-tab="text">Текст</button>
+                <button class="tab" data-tab="file">Файл</button>
+            </div>
+
+            <div class="tab-content" data-tab="text">
+                <textarea id="input" placeholder="Введите текст для сжатия...">abracadabra abracadabra abracadabra</textarea>
+                <div class="params-row">
+                    <label class="param" title="Окно уже обработанных символов, в котором ищется совпадение с началом непрочитанной части">
+                        <span>Search</span>
+                        <input type="number" id="searchSize" min="2" max="4096" value="32" />
+                    </label>
+                    <label class="param" title="Окно ещё не закодированных символов; в нём ищется самый длинный префикс, совпадающий с подстрокой search-буфера">
+                        <span>Lookahead</span>
+                        <input type="number" id="lookaheadSize" min="2" max="1024" value="16" />
+                    </label>
+                    <button class="btn primary grow" id="btnEncode">Сжать</button>
+                </div>
+            </div>
+
+            <div class="tab-content" data-tab="file" hidden>
+                <div class="file-zone" id="fileZone">
+                    <input type="file" id="fileInput" hidden />
+                    <div class="file-zone-inner">
+                        <div class="file-icon">📄</div>
+                        <div class="file-text">
+                            <strong>Перетащите файл</strong> или
+                            <button class="link" id="btnBrowse">выберите вручную</button>
+                        </div>
+                        <div class="file-hint">До 5 МБ · любой формат</div>
+                    </div>
+                </div>
+                <div class="file-status" id="fileStatus" hidden></div>
+                <div class="params-row">
+                    <label class="param">
+                        <span>Search</span>
+                        <input type="number" id="fSearchSize" min="2" max="4096" value="4096" />
+                    </label>
+                    <label class="param">
+                        <span>Lookahead</span>
+                        <input type="number" id="fLookaheadSize" min="2" max="1024" value="64" />
+                    </label>
+                    <button class="btn primary grow" id="btnCompressFile" disabled>Сжать файл</button>
+                </div>
+                <div class="file-actions" id="fileActions" hidden>
+                    <button class="btn" id="btnDownload">⬇ Скачать .lz77</button>
+                    <button class="btn ghost" id="btnDecompressFile">Разжать .lz77</button>
+                </div>
+            </div>
+
+            <div class="stats-mini" id="statsMini">
+                <div class="stat-mini"><span>Исходный</span><b id="statOrig">—</b></div>
+                <div class="stat-mini"><span>Сжатый</span><b id="statComp">—</b></div>
+                <div class="stat-mini"><span>Экономия</span><b id="statSaving" class="accent">—</b></div>
+                <div class="stat-mini"><span>Токенов</span><b id="statTokens">—</b></div>
+            </div>
+
+            <div class="chart-wrap">
+                <h3>Размер: исходный vs сжатый</h3>
+                <div class="chart-canvas-box"><canvas id="chartSize"></canvas></div>
+            </div>
+        </section>
+
+        <!-- ЦЕНТРАЛЬНАЯ КОЛОНКА: визуализация -->
+        <section class="panel viz-panel">
+            <div class="panel-header">
+                <h2>Пошаговая визуализация</h2>
+                <div class="step-controls">
+                    <button class="btn icon" id="btnFirst" title="К началу">⏮</button>
+                    <button class="btn icon" id="btnPrev" title="Назад">◀</button>
+                    <button class="btn icon" id="btnPlay" title="Авто (пробел)">▶</button>
+                    <button class="btn icon" id="btnNext" title="Вперёд">▶</button>
+                    <button class="btn icon" id="btnLast" title="В конец">⏭</button>
+                    <span class="step-counter" id="stepCounter">—</span>
+                </div>
+            </div>
+
+            <div class="legend">
+                <span class="lg" data-tip="Уже обработанные символы. Это память алгоритма — словарь, где он ищет повторы.">
+                    <i class="dot search"></i>Search buffer
+                </span>
+                <span class="lg" data-tip="Очередь символов, которые предстоит закодировать. Алгоритм ищет начало этой очереди в search-буфере.">
+                    <i class="dot look"></i>Lookahead
+                </span>
+                <span class="lg" data-tip="Самое длинное совпадение префикса lookahead-буфера с подстрокой search-буфера.">
+                    <i class="dot match"></i>Совпадение
+                </span>
+                <span class="lg" data-tip="Символ сразу после совпадения. Записывается в токен, чтобы можно было продвинуться дальше даже без совпадения.">
+                    <i class="dot next"></i>Следующий символ
+                </span>
+            </div>
+
+            <div class="window-view">
+                <div class="window-content" id="windowContent">
+                    <span class="hint">Нажмите «Сжать», чтобы начать.</span>
+                </div>
+            </div>
+
+            <div class="step-info">
+                <div class="info-block">
+                    <div class="info-label">Совпадение</div>
+                    <div class="info-value" id="matchInfo">—</div>
+                </div>
+                <div class="info-block">
+                    <div class="info-label">Токен (offset, length, next)</div>
+                    <div class="info-value mono" id="tokenInfo">—</div>
+                </div>
+                <div class="info-block">
+                    <div class="info-label">Курсор</div>
+                    <div class="info-value mono" id="cursorInfo">—</div>
+                </div>
+            </div>
+
+            <div class="tokens-section">
+                <div class="tokens-header">
+                    <span>Поток токенов</span>
+                    <span class="muted" id="tokensCount"></span>
+                </div>
+                <div class="tokens" id="tokensList">
+                    <span class="hint">После сжатия здесь появятся токены.</span>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="foot">
+        <span>Курсовая работа · «Алгоритмы и структуры данных» · LZ77</span>
+        <span class="hk">← → шаги · <kbd>Space</kbd> авто</span>
+    </footer>
+
+    <!-- Модальное окно с объяснением -->
+    <div class="modal-backdrop" id="helpModal" hidden>
+        <div class="modal">
+            <div class="modal-header">
+                <h2>Как работает LZ77</h2>
+                <button class="btn icon" id="btnHelpClose">✕</button>
+            </div>
+            <div class="modal-body">
+                <p>LZ77 — алгоритм сжатия без потерь, придуманный Лемпелем и Зивом в 1977 году. Основная идея: <b>если фрагмент текста уже встречался ранее, его можно заменить ссылкой назад</b>, вместо того чтобы повторять символы.</p>
+
+                <h3>Скользящее окно</h3>
+                <p>Окно делится на две части:</p>
+                <ul>
+                    <li><b><span class="hl-search">Search buffer</span></b> — уже закодированные символы. Это «память» алгоритма, в которой он ищет повторы. Чем он больше, тем дальше можно искать совпадение, но тем больше бит уходит на хранение смещения.</li>
+                    <li><b><span class="hl-look">Lookahead buffer</span></b> — символы, которые ещё предстоит закодировать. В нём алгоритм пытается найти как можно более длинный префикс, который уже есть в search-буфере.</li>
+                </ul>
+
+                <h3>Что такое токен</h3>
+                <p>На каждом шаге алгоритм выдаёт тройку <code>(offset, length, next_char)</code>:</p>
+                <ul>
+                    <li><b>offset</b> — насколько назад от курсора начинается совпадение.</li>
+                    <li><b>length</b> — длина совпадения.</li>
+                    <li><b>next_char</b> — символ сразу за совпадением. Он нужен, чтобы алгоритм мог двигаться вперёд даже когда совпадения нет (тогда токен имеет вид <code>(0, 0, c)</code>).</li>
+                </ul>
+
+                <h3>Почему это сжимает</h3>
+                <p>Один токен из ~3 байт может заменить десятки повторяющихся символов. На текстах, коде и логах, где много повторов, выигрыш существенный. На случайных или уже сжатых данных LZ77 наоборот может увеличить размер.</p>
+
+                <h3>Почему мелкие файлы «раздуваются»</h3>
+                <p>В бинарном формате <code>.lz77</code> есть фиксированный заголовок (12 байт) и каждый литерал (токен без совпадения) занимает ~22 бита — больше, чем сам символ. Поэтому файлы короче нескольких сотен байт после сжатия могут оказаться больше исходных. Это свойство всех алгоритмов с токеновой структурой (включая gzip): они окупаются на больших файлах с повторами, а не на коротких строках.</p>
+
+                <h3>Декодирование</h3>
+                <p>Тривиально: проходим по токенам и копируем length символов с позиции (текущая − offset), затем добавляем next_char. Никаких дополнительных таблиц не нужно.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>
