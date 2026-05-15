@@ -6,6 +6,8 @@
 search-буфера и выдаётся токен (offset, length, next_char).
 """
 
+import math
+import struct
 from dataclasses import dataclass, asdict
 from typing import List, Dict, Any
 
@@ -87,15 +89,23 @@ def encode(data: str, search_size: int = 32, lookahead_size: int = 16):
         # Сдвигаем курсор на длину совпадения + 1 (за next_char)
         cursor += length + (1 if next_char else 0)
 
-    # Оценка размера в битах: offset, length, next_char(8 бит)
-    import math
-
-    offset_bits = max(1, math.ceil(math.log2(max(2, search_size))))
-    length_bits = max(1, math.ceil(math.log2(max(2, lookahead_size))))
-    token_bits = offset_bits + length_bits + 8
-    compressed_bits = token_bits * len(tokens)
+    # Оценка размера, согласованная с реальной упаковкой pack():
+    # offset_bits + length_bits + 1 бит has_next + 8 бит next_char (если есть),
+    # плюс 12 байт заголовка файла.
+    offset_bits = _bits_for(search_size)
+    length_bits = _bits_for(lookahead_size)
+    token_bits_no_next = offset_bits + length_bits + 1
+    token_bits_with_next = token_bits_no_next + 8
+    total_token_bits = sum(
+        token_bits_with_next if t.next_char else token_bits_no_next
+        for t in tokens
+    )
+    header_bytes = len(MAGIC) + struct.calcsize(">HHI")
+    compressed_bytes = header_bytes + (total_token_bits + 7) // 8
+    compressed_bits = compressed_bytes * 8
     original_bits = len(data.encode("utf-8")) * 8
-    ratio = compressed_bits / original_bits if original_bits else 0
+    ratio = compressed_bytes * 8 / original_bits if original_bits else 0
+    avg_token_bits = token_bits_with_next  # для отображения
 
     return {
         "tokens": [t.to_dict() for t in tokens],
@@ -104,11 +114,11 @@ def encode(data: str, search_size: int = 32, lookahead_size: int = 16):
             "original_size_bytes": len(data.encode("utf-8")),
             "original_size_bits": original_bits,
             "token_count": len(tokens),
-            "token_bits": token_bits,
+            "token_bits": avg_token_bits,
             "offset_bits": offset_bits,
             "length_bits": length_bits,
             "compressed_size_bits": compressed_bits,
-            "compressed_size_bytes": math.ceil(compressed_bits / 8),
+            "compressed_size_bytes": compressed_bytes,
             "compression_ratio": ratio,
             "space_saving": 1 - ratio if ratio else 0,
         },
@@ -152,9 +162,6 @@ def decode(tokens: List[Dict[str, Any]]) -> str:
 #                   length    (length_bits   = ceil(log2(lookahead_size+1)) бит)
 #                   has_next  (1 бит)
 #                   next      (8 бит, только если has_next == 1)
-
-import math
-import struct
 
 MAGIC = b"LZ77"
 
@@ -250,20 +257,29 @@ def pack(result: Dict[str, Any]) -> bytes:
 
 def unpack(blob: bytes) -> List[Dict[str, Any]]:
     """Десериализует бинарный поток .lz77 в список токенов."""
-    if not blob.startswith(MAGIC):
-        raise ValueError("Файл не является .lz77 (неверный magic)")
+    if len(blob) < 12 or not blob.startswith(MAGIC):
+        raise ValueError("Файл не является .lz77 (неверный заголовок)")
     search_size, lookahead_size, count = struct.unpack(">HHI", blob[4:12])
     offset_bits = _bits_for(search_size)
     length_bits = _bits_for(lookahead_size)
+    body = blob[12:]
 
-    br = _BitReader(blob[12:])
+    # Проверяем, что битового потока хватит на заявленные токены
+    min_bits = count * (offset_bits + length_bits + 1)
+    if len(body) * 8 < min_bits:
+        raise ValueError("Файл .lz77 повреждён или обрезан")
+
+    br = _BitReader(body)
     tokens: List[Dict[str, Any]] = []
-    for _ in range(count):
-        offset = br.read(offset_bits)
-        length = br.read(length_bits)
-        has_next = br.read(1)
-        nc = chr(br.read(8)) if has_next else ""
-        tokens.append({"offset": offset, "length": length, "next_char": nc})
+    try:
+        for _ in range(count):
+            offset = br.read(offset_bits)
+            length = br.read(length_bits)
+            has_next = br.read(1)
+            nc = chr(br.read(8)) if has_next else ""
+            tokens.append({"offset": offset, "length": length, "next_char": nc})
+    except IndexError:
+        raise ValueError("Файл .lz77 повреждён или обрезан")
     return tokens
 
 

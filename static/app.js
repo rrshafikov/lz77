@@ -30,6 +30,8 @@ document.querySelectorAll(".tab").forEach((tab) => {
         document.querySelectorAll(".tab-content").forEach((x) => {
             x.hidden = x.dataset.tab !== t;
         });
+        // При переключении вкладок старая статистика теряет смысл
+        resetUI();
     });
 });
 
@@ -37,7 +39,11 @@ document.querySelectorAll(".tab").forEach((tab) => {
 $("btnSample").addEventListener("click", () => {
     $("input").value = SAMPLES[Math.floor(Math.random() * SAMPLES.length)];
 });
-$("btnClear").addEventListener("click", () => { $("input").value = ""; resetUI(); });
+$("btnClear").addEventListener("click", () => {
+    $("input").value = "";
+    resetFileUI();
+    resetUI();
+});
 $("btnHelp").addEventListener("click", () => { $("helpModal").hidden = false; });
 $("btnHelpClose").addEventListener("click", () => { $("helpModal").hidden = true; });
 $("helpModal").addEventListener("click", (e) => {
@@ -89,6 +95,19 @@ function handleFile(f) {
     $("btnCompressFile").disabled = false;
     $("fileActions").hidden = true;
     state.compressedBlob = null;
+    // Сбросить input.value, чтобы повторный выбор того же файла снова срабатывал
+    fileInput.value = "";
+}
+
+function resetFileUI() {
+    state.currentFile = null;
+    state.compressedBlob = null;
+    state.compressedName = null;
+    $("fileStatus").hidden = true;
+    $("fileStatus").innerHTML = "";
+    $("fileActions").hidden = true;
+    $("btnCompressFile").disabled = true;
+    fileInput.value = "";
 }
 
 $("btnCompressFile").addEventListener("click", compressFile);
@@ -255,7 +274,7 @@ function renderStep(step) {
 
     $("matchInfo").textContent = matchLen > 0
         ? `offset=${step.match_offset}, length=${matchLen}`
-        : "нет совпадения";
+        : "литерал (нет совпадения)";
     $("tokenInfo").textContent = `(${step.token.offset}, ${step.token.length}, '${escapeDisplay(step.token.next_char)}')`;
     $("cursorInfo").textContent = `${step.cursor} / ${state.text.length}`;
 }
